@@ -33,6 +33,7 @@
 #include "wangfiller.h"
 
 #include <QAction>
+#include <QActionGroup>
 #include <QToolBar>
 #include <QVector>
 
@@ -49,8 +50,31 @@ StampBrush::StampBrush(QObject *parent)
                        nullptr,
                        parent)
     , mStampActions(new StampActions(this))
+    , mIsometricSurfaceGroup(new QActionGroup(this))
+    , mIsometricSurfaceSeparator(new QAction(this))
+    , mDefaultSurfaceAction(new QAction(this))
+    , mLeftSurfaceAction(new QAction(this))
+    , mRightSurfaceAction(new QAction(this))
+    , mFlatSurfaceAction(new QAction(this))
 {
     setUsesSelectedTiles(true);
+
+    mIsometricSurfaceSeparator->setSeparator(true);
+
+    const auto addSurfaceAction = [this] (QAction *action, IsometricSurface::Face face) {
+        action->setCheckable(true);
+        action->setData(face);
+        mIsometricSurfaceGroup->addAction(action);
+    };
+    addSurfaceAction(mDefaultSurfaceAction, IsometricSurface::None);
+    addSurfaceAction(mLeftSurfaceAction, IsometricSurface::LeftFar);
+    addSurfaceAction(mRightSurfaceAction, IsometricSurface::RightFar);
+    addSurfaceAction(mFlatSurfaceAction, IsometricSurface::Flat);
+    mDefaultSurfaceAction->setChecked(true);
+
+    connect(mIsometricSurfaceGroup, &QActionGroup::triggered, this, [this] (QAction *action) {
+        setIsometricSurfaceMode(static_cast<IsometricSurface::Face>(action->data().toInt()));
+    });
 
     connect(mStampActions->random(), &QAction::toggled, this, &StampBrush::randomChanged);
     connect(mStampActions->wangFill(), &QAction::toggled, this, &StampBrush::wangFillChanged);
@@ -63,6 +87,8 @@ StampBrush::StampBrush(QObject *parent)
             [this] { emit stampChanged(mStamp.rotated(RotateLeft)); });
     connect(mStampActions->rotateRight(), &QAction::triggered, this,
             [this] { emit stampChanged(mStamp.rotated(RotateRight)); });
+
+    languageChanged();
 }
 
 StampBrush::~StampBrush() = default;
@@ -259,6 +285,14 @@ void StampBrush::languageChanged()
     setName(tr("Stamp Brush"));
 
     mStampActions->languageChanged();
+    mDefaultSurfaceAction->setText(tr("Default"));
+    mDefaultSurfaceAction->setToolTip(tr("Use Tile Surface"));
+    mLeftSurfaceAction->setText(tr("Left"));
+    mLeftSurfaceAction->setToolTip(tr("Paint as Left Surface"));
+    mRightSurfaceAction->setText(tr("Right"));
+    mRightSurfaceAction->setToolTip(tr("Paint as Right Surface"));
+    mFlatSurfaceAction->setText(tr("Flat"));
+    mFlatSurfaceAction->setToolTip(tr("Paint as Flat Surface"));
 }
 
 void StampBrush::mapDocumentChanged(MapDocument *oldDocument,
@@ -269,6 +303,8 @@ void StampBrush::mapDocumentChanged(MapDocument *oldDocument,
     if (oldDocument) {
         disconnect(oldDocument, &MapDocument::tileProbabilityChanged,
                    this, &StampBrush::invalidateRandomCache);
+        disconnect(oldDocument, &Document::changed,
+                   this, &StampBrush::updateIsometricSurfaceActions);
     }
 
     if (newDocument) {
@@ -276,7 +312,11 @@ void StampBrush::mapDocumentChanged(MapDocument *oldDocument,
         updatePreview();
         connect(newDocument, &MapDocument::tileProbabilityChanged,
                 this, &StampBrush::invalidateRandomCache);
+        connect(newDocument, &Document::changed,
+                this, &StampBrush::updateIsometricSurfaceActions);
     }
+
+    updateIsometricSurfaceActions();
 }
 
 QList<Layer *> StampBrush::targetLayers() const
@@ -324,6 +364,45 @@ void StampBrush::setStamp(const TileStamp &stamp)
 void StampBrush::populateToolBar(QToolBar *toolBar)
 {
     mStampActions->populateToolBar(toolBar, mIsRandom, mIsWangFill);
+    toolBar->addAction(mIsometricSurfaceSeparator);
+    toolBar->addAction(mDefaultSurfaceAction);
+    toolBar->addAction(mLeftSurfaceAction);
+    toolBar->addAction(mRightSurfaceAction);
+    toolBar->addAction(mFlatSurfaceAction);
+    updateIsometricSurfaceActions();
+}
+
+void StampBrush::updateIsometricSurfaceActions()
+{
+    const bool visible = mapDocument()
+            && isometricSurfaceRenderingEnabled(mapDocument()->map());
+
+    mIsometricSurfaceSeparator->setVisible(visible);
+    for (QAction *action : mIsometricSurfaceGroup->actions())
+        action->setVisible(visible);
+}
+
+void StampBrush::setIsometricSurfaceMode(IsometricSurface::Face face)
+{
+    if (mIsometricSurfaceMode == face)
+        return;
+
+    mIsometricSurfaceMode = face;
+    updatePreview();
+}
+
+void StampBrush::applyIsometricSurfaceMode(Map *map) const
+{
+    if (!isometricSurfaceRenderingEnabled(map))
+        return;
+
+    for (Layer *layer : map->tileLayers()) {
+        auto tileLayer = static_cast<TileLayer *>(layer);
+        for (Cell &cell : *tileLayer) {
+            if (isometricSurfaceForTile(cell.tile()).face != IsometricSurface::None)
+                setIsometricSurfaceOverride(cell, mIsometricSurfaceMode);
+        }
+    }
 }
 
 void StampBrush::setWangSet(WangSet *wangSet)
@@ -622,6 +701,8 @@ void StampBrush::drawPreviewLayer(const QVector<QPoint> &points)
         preview->addTilesets(preview->usedTilesets());
         mPreviewMap = preview;
     }
+
+    applyIsometricSurfaceMode(mPreviewMap.data());
 }
 
 /**

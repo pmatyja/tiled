@@ -23,12 +23,17 @@
 
 #include "abstracttiletool.h"
 #include "capturestamphelper.h"
+#include "isometricsurface.h"
 #include "randompicker.h"
 #include "tilelayer.h"
 #include "tilestamp.h"
 
+class QAction;
+class QActionGroup;
+
 namespace Tiled {
 
+class Map;
 class Tile;
 class WangSet;
 
@@ -110,6 +115,9 @@ private:
     void endCapture();
 
     void updateBrushBehavior();
+    void updateIsometricSurfaceActions();
+    void setIsometricSurfaceMode(IsometricSurface::Face face);
+    void applyIsometricSurfaceMode(Map *map) const;
     void updatePreview();
     void updatePreview(QPoint tilePos);
 
@@ -166,6 +174,13 @@ private:
     void invalidateRandomCache();
 
     StampActions *mStampActions;
+    QActionGroup *mIsometricSurfaceGroup;
+    QAction *mIsometricSurfaceSeparator;
+    QAction *mDefaultSurfaceAction;
+    QAction *mLeftSurfaceAction;
+    QAction *mRightSurfaceAction;
+    QAction *mFlatSurfaceAction;
+    IsometricSurface::Face mIsometricSurfaceMode = IsometricSurface::None;
 };
 
 } // namespace Tiled

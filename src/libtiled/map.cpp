@@ -31,6 +31,7 @@
 #include "map.h"
 
 #include "imagelayer.h"
+#include "isometricsurface.h"
 #include "layer.h"
 #include "mapobject.h"
 #include "objectgroup.h"
@@ -162,6 +163,9 @@ void Map::recomputeDrawMargins() const
                             offsetMargins.top() + maxTileSize - tileHeight(),
                             offsetMargins.right() + maxTileSize - tileWidth(),
                             offsetMargins.bottom());
+
+    if (isometricSurfaceRenderingEnabled(this))
+        mDrawMargins = mDrawMargins | isometricSurfaceDrawMargins(tileSize());
 
     mDrawMarginsDirty = false;
 }

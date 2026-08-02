@@ -1,5 +1,6 @@
 ### Unreleased
 
+* Added tile-defined isometric surface projection with far/close side placement and per-cell Stamp Brush overrides
 * Added 'Collapse All' action and 'Only Expand to Current' mode to Project view (with rhythmcache, #4346)
 * Added command variables %exportfile and %exportpath (#4476)
 * Added a configurable world grid with snapping for maps (by Kanishka, #4534)

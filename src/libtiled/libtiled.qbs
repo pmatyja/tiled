@@ -113,6 +113,8 @@ DynamicLibrary {
         "imagereference.h",
         "isometricrenderer.cpp",
         "isometricrenderer.h",
+        "isometricsurface.cpp",
+        "isometricsurface.h",
         "layer.cpp",
         "layer.h",
         "logginginterface.cpp",

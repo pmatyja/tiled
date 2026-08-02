@@ -30,6 +30,7 @@
 
 #include "imagelayer.h"
 #include "isometricrenderer.h"
+#include "isometricsurface.h"
 #include "map.h"
 #include "mapobject.h"
 #include "obliquerenderer.h"
@@ -62,9 +63,43 @@ struct TintedKey
     }
 };
 
+struct ProjectedTileKey
+{
+    const qint64 pixmapKey;
+    const QRect rect;
+    const QSize tileSize;
+    const QColor color;
+    const int face;
+    const int flags;
+    const bool smooth;
+
+    bool operator==(const ProjectedTileKey &o) const
+    {
+        return pixmapKey == o.pixmapKey &&
+                rect == o.rect &&
+                tileSize == o.tileSize &&
+                color == o.color &&
+                face == o.face &&
+                flags == o.flags &&
+                smooth == o.smooth;
+    }
+};
+
 size_t qHash(const TintedKey &key, size_t seed) Q_DECL_NOTHROW
 {
     return qHashMulti(seed, key.pixmapKey, key.rect, key.color.rgba());
+}
+
+size_t qHash(const ProjectedTileKey &key, size_t seed) Q_DECL_NOTHROW
+{
+    return qHashMulti(seed,
+                      key.pixmapKey,
+                      key.rect,
+                      key.tileSize,
+                      key.color.rgba(),
+                      key.face,
+                      key.flags,
+                      key.smooth);
 }
 
 // Borrowed from qpixmapcache.cpp
@@ -128,6 +163,131 @@ static QPixmap tinted(const QPixmap &pixmap, const QRect &rect, const QColor &co
     cache.insert(tintedKey, new QPixmap(resultImage), cost(resultImage));
 
     return resultImage;
+}
+
+static bool isLeftSurface(IsometricSurface::Face face)
+{
+    return face == IsometricSurface::LeftFar
+            || face == IsometricSurface::LeftClose;
+}
+
+static bool isRightSurface(IsometricSurface::Face face)
+{
+    return face == IsometricSurface::RightFar
+            || face == IsometricSurface::RightClose;
+}
+
+static bool isSideSurface(IsometricSurface::Face face)
+{
+    return isLeftSurface(face) || isRightSurface(face);
+}
+
+static QPointF surfaceEdgeOffset(IsometricSurface::Face face, qreal width, qreal height)
+{
+    switch (face) {
+    case IsometricSurface::LeftFar:
+        return QPointF(-width / 4, -height / 4);
+    case IsometricSurface::RightFar:
+        return QPointF(width / 4, -height / 4);
+    case IsometricSurface::LeftClose:
+        return QPointF(width / 4, height / 4);
+    case IsometricSurface::RightClose:
+        return QPointF(-width / 4, height / 4);
+    case IsometricSurface::Flat:
+    case IsometricSurface::None:
+        return QPointF();
+    }
+
+    Q_UNREACHABLE();
+}
+
+static QPixmap projectedTile(const Tile *tile,
+                             const Cell &cell,
+                             IsometricSurface::Face face,
+                             const QSize &tileSize,
+                             const QColor &tintColor,
+                             bool smooth)
+{
+    const QPixmap &image = tile->image();
+    const QRect imageRect = tile->imageRect();
+    if (imageRect.isEmpty())
+        return QPixmap();
+
+    const ProjectedTileKey key {
+        image.cacheKey(),
+        imageRect,
+        tileSize,
+        tintColor,
+        face,
+        cell.flags(),
+        smooth,
+    };
+
+    static QCache<ProjectedTileKey, QPixmap> cache { 100 * 1024 };
+    if (const auto cached = cache.object(key))
+        return *cached;
+
+    QPixmap source = tinted(image, imageRect, tintColor);
+    if (!needsTint(tintColor))
+        source = source.copy(imageRect);
+
+    QTransform cellTransform;
+    cellTransform.scale(cell.flippedHorizontally() ? -1 : 1,
+                        cell.flippedVertically() ? -1 : 1);
+    if (!cellTransform.isIdentity()) {
+        source = source.transformed(cellTransform,
+                                    smooth ? Qt::SmoothTransformation
+                                           : Qt::FastTransformation);
+    }
+
+    const qreal width = tileSize.width();
+    const qreal height = tileSize.height();
+    QPointF origin;
+    QPointF horizontal;
+    QPointF vertical;
+    QSize outputSize;
+
+    // The transform maps source texture axes onto the selected world plane.
+    switch (face) {
+    case IsometricSurface::Flat:
+        origin = QPointF(width / 2, 0);
+        horizontal = QPointF(width / 2, height / 2);
+        vertical = QPointF(-width / 2, height / 2);
+        outputSize = tileSize;
+        break;
+    case IsometricSurface::LeftFar:
+    case IsometricSurface::LeftClose:
+        origin = QPointF(width / 2, 0);
+        horizontal = QPointF(-width / 2, height / 2);
+        vertical = QPointF(0, height);
+        outputSize = QSize(qCeil(width / 2), qCeil(height * 1.5));
+        break;
+    case IsometricSurface::RightFar:
+    case IsometricSurface::RightClose:
+        horizontal = QPointF(width / 2, height / 2);
+        vertical = QPointF(0, height);
+        outputSize = QSize(qCeil(width / 2), qCeil(height * 1.5));
+        break;
+    case IsometricSurface::None:
+        return QPixmap();
+    }
+
+    QPixmap result(outputSize);
+    result.fill(Qt::transparent);
+
+    QPainter painter(&result);
+    painter.setRenderHint(QPainter::SmoothPixmapTransform, smooth);
+    painter.setTransform(QTransform(horizontal.x() / source.width(),
+                                    horizontal.y() / source.width(),
+                                    vertical.x() / source.height(),
+                                    vertical.y() / source.height(),
+                                    origin.x(),
+                                    origin.y()));
+    painter.drawPixmap(QPointF(), source);
+    painter.end();
+
+    cache.insert(key, new QPixmap(result), cost(result));
+    return result;
 }
 
 MapRenderer::~MapRenderer()
@@ -426,12 +586,13 @@ CellRenderer::CellRenderer(QPainter *painter, const MapRenderer *renderer, const
  */
 void CellRenderer::render(const Cell &cell, const QPointF &screenPos, const QSizeF &size, Origin origin)
 {
-    const Tile *tile = cell.tile();
+    const Tile *definitionTile = cell.tile();
+    const Tile *imageTile = definitionTile;
 
-    if (tile && mRenderer->testFlag(ShowTileAnimations))
-        tile = tile->currentFrameTile();
+    if (imageTile && mRenderer->testFlag(ShowTileAnimations))
+        imageTile = imageTile->currentFrameTile();
 
-    if (!tile || tile->image().isNull()) {
+    if (!imageTile || imageTile->image().isNull()) {
         QRectF target { screenPos, size };
 
         if (origin == BottomLeft)
@@ -440,6 +601,11 @@ void CellRenderer::render(const Cell &cell, const QPointF &screenPos, const QSiz
         renderMissingImageMarker(*mPainter, target);
         return;
     }
+
+    if (origin == BottomLeft && renderIsometricSurface(cell, definitionTile, imageTile, screenPos))
+        return;
+
+    const Tile *tile = imageTile;
 
     // The USHRT_MAX limit is rather arbitrary but avoids a crash in
     // drawPixmapFragments for a large number of fragments.
@@ -552,6 +718,45 @@ void CellRenderer::render(const Cell &cell, const QPointF &screenPos, const QSiz
         mTile = nullptr;
         mFragments.clear();
     }
+}
+
+bool CellRenderer::renderIsometricSurface(const Cell &cell,
+                                          const Tile *tile,
+                                          const Tile *imageTile,
+                                          const QPointF &screenPos)
+{
+    if (!isometricSurfaceRenderingEnabled(mRenderer->map()))
+        return false;
+
+    const IsometricSurface surface = isometricSurfaceForCell(cell);
+    if (surface.face == IsometricSurface::None)
+        return false;
+
+    flush();
+
+    const QSize tileSize = mRenderer->map()->tileSize();
+    const QPixmap projected = projectedTile(imageTile,
+                                            cell,
+                                            surface.face,
+                                            tileSize,
+                                            mTintColor,
+                                            mPainter->testRenderHint(QPainter::SmoothPixmapTransform));
+    if (projected.isNull())
+        return false;
+
+    const qreal width = tileSize.width();
+    const qreal height = tileSize.height();
+    const qreal anchorX = width / 2 - projected.width() / 2.0;
+    const qreal anchorY = -projected.height()
+            - (isSideSurface(surface.face) ? height / 4 : 0);
+    QPointF anchor = screenPos + QPointF(anchorX, anchorY)
+            + surfaceEdgeOffset(surface.face, width, height);
+    anchor += QPointF((surface.x - surface.y) * width / 2,
+                      (surface.x + surface.y) * height / 2 - surface.z * height);
+
+    anchor += tile->offset();
+    mPainter->drawPixmap(anchor, projected);
+    return true;
 }
 
 /**

@@ -32,6 +32,7 @@ namespace Tiled {
 class ImageLayer;
 class Layer;
 class MapObject;
+class Object;
 class ObjectGroup;
 class Tile;
 class TileLayer;
@@ -100,6 +101,7 @@ private:
     void repaintRegion(const QRegion &region, TileLayer *tileLayer);
 
     void documentChanged(const ChangeEvent &change);
+    void isometricSurfacePropertiesChanged(Object *object);
     void mapChanged();
     void tileLayerChanged(TileLayer *tileLayer, MapDocument::TileLayerChangeFlags flags);
 

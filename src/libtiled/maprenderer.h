@@ -340,6 +340,10 @@ public:
     void flush();
 
 private:
+    bool renderIsometricSurface(const Cell &cell,
+                                const Tile *tile,
+                                const Tile *imageTile,
+                                const QPointF &screenPos);
     void paintTileCollisionShapes();
 
     QPainter * const mPainter;

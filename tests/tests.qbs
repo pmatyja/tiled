@@ -3,6 +3,7 @@ Project {
 
     references: [
         "automapping",
+        "isometricrenderer",
         "mapreader",
         "properties",
         "staggeredrenderer",
