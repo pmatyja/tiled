@@ -33,6 +33,7 @@
 #include "changewangsetdata.h"
 #include "clipboardmanager.h"
 #include "compression.h"
+#include "isometricsurface.h"
 #include "mapdocument.h"
 #include "objectgroup.h"
 #include "objecttemplate.h"
@@ -67,6 +68,12 @@
 #include <algorithm>
 
 namespace Tiled {
+
+static const QString isometricProjectedProperty = QStringLiteral("isometricProjected");
+static const QString isometricFaceProperty = QStringLiteral("isometricFace");
+static const QString isometricXProperty = QStringLiteral("isometricX");
+static const QString isometricYProperty = QStringLiteral("isometricY");
+static const QString isometricZProperty = QStringLiteral("isometricZ");
 
 static SessionOption<QList<bool>> propertiesObjectExpandedStates { "properties.objectExpandedStates" };
 static SessionOption<bool> customPropertiesExpanded { "properties.customExpanded", true };
@@ -1460,6 +1467,22 @@ public:
                         push(new ChangeTilesetOrientation(tilesetDocument(), value));
                     });
 
+        mTileProjectionProperty = new BaseEnumProperty(
+                    tr("Tile Projection"),
+                    [this] {
+                        return tileset()->property(isometricProjectedProperty).toBool() ? 1 : 0;
+                    },
+                    [this](const int &value) {
+                        push(new SetProperty(mDocument,
+                                             { tileset() },
+                                             isometricProjectedProperty,
+                                             value == 1));
+                    });
+        mTileProjectionProperty->setEnumNames({
+            tr("Normal"),
+            tr("Isometric Projected"),
+        });
+
         mGridSizeProperty = new SizeProperty(
                     tr("Grid Size"),
                     [this] {
@@ -1539,6 +1562,7 @@ public:
         mTilesetProperties->addProperty(mFillModeProperty);
         mTilesetProperties->addProperty(mBackgroundColorProperty);
         mTilesetProperties->addProperty(mOrientationProperty);
+        mTilesetProperties->addProperty(mTileProjectionProperty);
         mTilesetProperties->addProperty(mGridSizeProperty);
         mTilesetProperties->addProperty(mColumnCountProperty);
         mTilesetProperties->addProperty(mAllowedTransformationsProperty);
@@ -1560,6 +1584,16 @@ public:
                 mObjectAlignmentProperty, &Property::valueChanged);
         connect(tilesetDocument(), &TilesetDocument::tilesetChanged,
                 this, &TilesetProperties::onTilesetChanged);
+        const auto projectionPropertyChanged = [this] (Object *object, const QString &name) {
+                    if (object == tileset() && name == isometricProjectedProperty)
+                        emit mTileProjectionProperty->valueChanged();
+                };
+        connect(tilesetDocument(), &Document::propertyAdded,
+                this, projectionPropertyChanged);
+        connect(tilesetDocument(), &Document::propertyRemoved,
+                this, projectionPropertyChanged);
+        connect(tilesetDocument(), &Document::propertyChanged,
+                this, projectionPropertyChanged);
     }
 
 private:
@@ -1618,6 +1652,7 @@ private:
     Property *mFillModeProperty;
     Property *mBackgroundColorProperty;
     Property *mOrientationProperty;
+    BaseEnumProperty *mTileProjectionProperty;
     SizeProperty *mGridSizeProperty;
     IntProperty *mColumnCountProperty;
     Property *mAllowedTransformationsProperty;
@@ -2035,6 +2070,62 @@ public:
         mProbabilityProperty->setToolTip(tr("Relative chance this tile will be picked"));
         mProbabilityProperty->setMinimum(0.0);
 
+        mSurfaceFaceProperty = new BaseEnumProperty(
+                    tr("Default Face"),
+                    [this] {
+                        return static_cast<int>(isometricSurfaceForTile(tile()).face);
+                    },
+                    [this](const int &value) {
+                        QString face;
+                        switch (static_cast<IsometricSurface::Face>(value)) {
+                        case IsometricSurface::Flat:
+                            face = QStringLiteral("flat");
+                            break;
+                        case IsometricSurface::LeftFar:
+                            face = QStringLiteral("leftFar");
+                            break;
+                        case IsometricSurface::RightFar:
+                            face = QStringLiteral("rightFar");
+                            break;
+                        case IsometricSurface::LeftClose:
+                            face = QStringLiteral("leftClose");
+                            break;
+                        case IsometricSurface::RightClose:
+                            face = QStringLiteral("rightClose");
+                            break;
+                        case IsometricSurface::None:
+                            face = QStringLiteral("none");
+                            break;
+                        }
+                        setSurfaceProperty(isometricFaceProperty, face);
+                    });
+        mSurfaceFaceProperty->setEnumNames({
+            tr("Normal"),
+            tr("Flat"),
+            tr("Left Far"),
+            tr("Right Far"),
+            tr("Left Close"),
+            tr("Right Close"),
+        });
+
+        const auto makeCoordinateProperty = [this] (const QString &name,
+                                                     const QString &propertyName) {
+            auto property = new FloatProperty(
+                        name,
+                        [this, propertyName] {
+                            return tile()->property(propertyName).toDouble();
+                        },
+                        [this, propertyName](const double &value) {
+                            setSurfaceProperty(propertyName, value);
+                        });
+            property->setRange(-1.0, 1.0);
+            property->setSingleStep(0.05);
+            return property;
+        };
+        mSurfaceXProperty = makeCoordinateProperty(tr("X Offset"), isometricXProperty);
+        mSurfaceYProperty = makeCoordinateProperty(tr("Y Offset"), isometricYProperty);
+        mSurfaceZProperty = makeCoordinateProperty(tr("Z Offset"), isometricZProperty);
+
         mTileProperties = new GroupProperty(tr("Tile"));
         mTileProperties->addProperty(mIdProperty);
         mTileProperties->addProperty(mClassProperty);
@@ -2047,6 +2138,13 @@ public:
         mTileProperties->addProperty(mProbabilityProperty);
 
         addProperty(mTileProperties);
+
+        mSurfaceProperties = new GroupProperty(tr("Isometric Surface"));
+        mSurfaceProperties->addProperty(mSurfaceFaceProperty);
+        mSurfaceProperties->addProperty(mSurfaceXProperty);
+        mSurfaceProperties->addProperty(mSurfaceYProperty);
+        mSurfaceProperties->addProperty(mSurfaceZProperty);
+        addProperty(mSurfaceProperties);
 
         // annoying... maybe we should somehow always have the relevant TilesetDocument
         if (auto tilesetDocument = qobject_cast<TilesetDocument*>(document)) {
@@ -2063,10 +2161,43 @@ public:
                     this, &TileProperties::tileProbabilityChanged);
         }
 
+        const auto surfacePropertyChanged = [this] (Object *object, const QString &name) {
+            if (mDocument->currentObjects().contains(object)
+                    && isIsometricSurfaceProperty(name)) {
+                updateSurfaceProperties();
+            }
+        };
+        connect(document, &Document::propertyAdded, this, surfacePropertyChanged);
+        connect(document, &Document::propertyRemoved, this, surfacePropertyChanged);
+        connect(document, &Document::propertyChanged, this, surfacePropertyChanged);
+        connect(document, &Document::propertiesChanged, this, [this] (Object *object) {
+            if (mDocument->currentObjects().contains(object))
+                updateSurfaceProperties();
+        });
+
         updateEnabledState();
     }
 
 private:
+    void setSurfaceProperty(const QString &name, const QVariant &value)
+    {
+        push(new SetProperty(mDocument, mDocument->currentObjects(), name, value));
+    }
+
+    void updateSurfaceProperties()
+    {
+        emit mSurfaceFaceProperty->valueChanged();
+        emit mSurfaceXProperty->valueChanged();
+        emit mSurfaceYProperty->valueChanged();
+        emit mSurfaceZProperty->valueChanged();
+
+        const bool enabled = tilesetDocument()
+                && isometricSurfaceForTile(tile()).face != IsometricSurface::None;
+        mSurfaceXProperty->setEnabled(enabled);
+        mSurfaceYProperty->setEnabled(enabled);
+        mSurfaceZProperty->setEnabled(enabled);
+    }
+
     void tileImageSourceChanged(Tile *tile)
     {
         if (tile != this->tile())
@@ -2091,6 +2222,8 @@ private:
         mImageProperty->setEnabled(hasTilesetDocument && isCollection);
         mRectangleProperty->setEnabled(hasTilesetDocument && isCollection);
         mProbabilityProperty->setEnabled(hasTilesetDocument);
+        mSurfaceFaceProperty->setEnabled(hasTilesetDocument);
+        updateSurfaceProperties();
     }
 
     TilesetDocument *tilesetDocument() const
@@ -2104,10 +2237,15 @@ private:
     }
 
     GroupProperty *mTileProperties;
+    GroupProperty *mSurfaceProperties;
     Property *mIdProperty;
     UrlProperty *mImageProperty;
     RectProperty *mRectangleProperty;
     FloatProperty *mProbabilityProperty;
+    BaseEnumProperty *mSurfaceFaceProperty;
+    FloatProperty *mSurfaceXProperty;
+    FloatProperty *mSurfaceYProperty;
+    FloatProperty *mSurfaceZProperty;
 };
 
 class WangSetProperties : public ObjectProperties
@@ -2672,12 +2810,25 @@ void CustomProperties::refresh()
 
     // Suggest properties inherited from the class, tile or template.
     Properties suggestedProperties = currentObject->inheritedProperties();
+    Properties properties = currentObject->properties();
+
+    const auto hideProperty = [&] (const QString &name) {
+        properties.remove(name);
+        suggestedProperties.remove(name);
+    };
+    if (currentObject->typeId() == Object::TilesetType) {
+        hideProperty(isometricProjectedProperty);
+    } else if (currentObject->typeId() == Object::TileType) {
+        hideProperty(isometricFaceProperty);
+        hideProperty(isometricXProperty);
+        hideProperty(isometricYProperty);
+        hideProperty(isometricZProperty);
+    }
 
     if (isAutomappingRulesMap(qobject_cast<const MapDocument*>(mDocument)))
         addAutomappingProperties(suggestedProperties, currentObject);
 
-    setValue(currentObject->properties(),
-             suggestedProperties);
+    setValue(properties, suggestedProperties);
 
     const bool editingTileset = mDocument->type() == Document::TilesetDocumentType;
     const bool partOfTileset = mDocument->currentObject()->isPartOfTileset();

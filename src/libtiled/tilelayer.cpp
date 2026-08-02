@@ -31,6 +31,8 @@
 
 #include "containerhelpers.h"
 #include "hex.h"
+#include "isometricsurface.h"
+#include "map.h"
 #include "tile.h"
 
 #include <algorithm>
@@ -171,7 +173,18 @@ static QMargins computeDrawMargins(const QSet<SharedTileset> &tilesets)
 
 QMargins TileLayer::drawMargins() const
 {
-    return computeDrawMargins(usedTilesets());
+    QMargins margins = computeDrawMargins(usedTilesets());
+
+    if (tileLayerUsesIsometricSurfaces(this)) {
+        const QSize tileSize = map()->tileSize();
+        const QMargins surfaceMargins = isometricSurfaceDrawMargins(tileSize);
+        margins = margins | QMargins(surfaceMargins.left(),
+                                     surfaceMargins.top() + tileSize.height(),
+                                     surfaceMargins.right() + tileSize.width(),
+                                     surfaceMargins.bottom());
+    }
+
+    return margins;
 }
 
 /**

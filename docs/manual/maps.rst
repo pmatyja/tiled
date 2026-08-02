@@ -39,9 +39,45 @@ Isometric
 ~~~~~~~~~
 
 Isometric maps are projected to give a 3D-like appearance. Tiles are still arranged in a grid, but
-are drawn as diamonds (though Tiled doesn't transform your art, you'll need to provide the diamond
-shaped tiles). Object positions are stored in a projected coordinate space (see
+are drawn as diamonds (by default Tiled doesn't transform your art, so you'll need to provide
+diamond-shaped tiles). Object positions are stored in a projected coordinate space (see
 :ref:`object-layer-introduction`).
+
+Projecting Rectangular Surface Textures
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Tiled can project rectangular tile textures onto the three visible isometric
+planes. This behavior is available automatically on isometric maps. In the
+tileset Properties view, set ``Tile Projection`` to ``Isometric Projected`` to
+make every tile in that tileset project as a flat surface by default. Tilesets
+using ``Normal`` projection continue to render normally.
+
+Selecting a tile shows an ``Isometric Surface`` group in the Properties view.
+Its ``Default Face`` can be ``Normal``, ``Flat``, ``Left Far``, ``Right Far``,
+``Left Close`` or ``Right Close``, and its X, Y and Z offsets range from -1
+through 1. The offsets are signed displacements from the surface's default
+world-tile anchor and default to 0.
+
+The ``flat`` plane spans the positive X and Y axes. The ``left`` plane spans
+the positive Y axis and extends down the Z axis, while the ``right`` plane spans
+the positive X axis and extends down the Z axis. Tile flipping is applied to
+the source texture before projection. The flat face is centered on the world
+tile. For side faces, the bottom-center of the source texture is anchored to
+the selected tile edge. The ``Far`` options use the upper tile edge and the
+``Close`` options use the lower tile edge.
+
+When using the Stamp Brush on an isometric map, the Tool Options toolbar shows
+``Default``, ``Left``, ``Right`` and ``Flat`` buttons. ``Default`` uses each
+tile's effective tile or tileset default, including its far or close placement.
+The other buttons override the plane for newly painted cells, while keeping the
+tile's XYZ offset. ``Left`` and ``Right`` overrides use the far edge. These
+overrides are saved with the cell. Horizontal and vertical flipping still mirror
+the source texture, but diagonal and hexagonal rotation are reserved for storing
+the surface override on projectable tiles.
+
+Surface tiles follow the tile layer's existing drawing order; this feature does
+not add depth sorting between overlapping cells. Projection applies to tile
+layers in isometric maps, not to tile objects.
 
 Isometric (Staggered)
 ~~~~~~~~~~~~~~~~~~~~~

@@ -27,6 +27,7 @@
 #include "grouplayer.h"
 #include "grouplayeritem.h"
 #include "imagelayeritem.h"
+#include "isometricsurface.h"
 #include "mapeditor.h"
 #include "mapobject.h"
 #include "mapobjectitem.h"
@@ -151,10 +152,22 @@ MapItem::MapItem(const MapDocumentPtr &mapDocument, DisplayMode displayMode,
     connect(prefs, &Preferences::objectLineWidthChanged, this, &MapItem::setObjectLineWidth);
     connect(prefs, &Preferences::showTileObjectOutlinesChanged, this, &MapItem::setShowTileObjectOutlines);
     connect(prefs, &Preferences::highlightCurrentLayerChanged, this, &MapItem::updateSelectedLayersHighlight);
-    connect(prefs, &Preferences::propertyTypesChanged, this, &MapItem::syncAllObjectItems);
+    connect(prefs, &Preferences::propertyTypesChanged, this, [this] {
+        syncAllObjectItems();
+        this->mapDocument()->map()->invalidateDrawMargins();
+        mapChanged();
+    });
     connect(prefs, &Preferences::backgroundFadeColorChanged, this, [this] (QColor color) { mDarkRectangle->setBrush(color); });
 
     connect(mapDocument.data(), &Document::changed, this, &MapItem::documentChanged);
+    const auto customPropertyChanged = [this] (Object *object, const QString &name) {
+        if (isIsometricSurfaceProperty(name))
+            isometricSurfacePropertiesChanged(object);
+    };
+    connect(mapDocument.data(), &Document::propertyAdded, this, customPropertyChanged);
+    connect(mapDocument.data(), &Document::propertyRemoved, this, customPropertyChanged);
+    connect(mapDocument.data(), &Document::propertyChanged, this, customPropertyChanged);
+    connect(mapDocument.data(), &Document::propertiesChanged, this, &MapItem::isometricSurfacePropertiesChanged);
     connect(mapDocument.data(), &MapDocument::mapResized, this, &MapItem::mapChanged);
     connect(mapDocument.data(), &MapDocument::regionChanged, this, &MapItem::repaintRegion);
     connect(mapDocument.data(), &MapDocument::tileLayerChanged, this, &MapItem::tileLayerChanged);
@@ -206,6 +219,22 @@ MapItem::MapItem(const MapDocumentPtr &mapDocument, DisplayMode displayMode,
 
 MapItem::~MapItem()
 {
+}
+
+void MapItem::isometricSurfacePropertiesChanged(Object *object)
+{
+    if (!object)
+        return;
+
+    if (object == mapDocument()->map()) {
+        mapDocument()->map()->invalidateDrawMargins();
+        mapChanged();
+        return;
+    }
+
+    if (object->typeId() == Object::TileType
+            || object->typeId() == Object::TilesetType)
+        mapChanged();
 }
 
 void MapItem::setDisplayMode(DisplayMode displayMode)
